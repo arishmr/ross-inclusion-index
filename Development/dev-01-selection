@@ -1,0 +1,68 @@
+rm(list = ls())
+
+## Load data
+data <- read.csv("Data/Development/Responses.csv")
+data <- data[-c(1:2),] # delete unnecessary qualtrics rows
+data <- data[-c(1:17)] # delete unnecessary qualtrics columns
+matching <- read.csv("Data/Development/Item Matching.csv")
+
+
+## Convert selection data from wide form to long form
+
+selectdata1 <- data %>%
+  dplyr::select(Name,
+                starts_with("Select.Recruitment.1"),
+                starts_with("Select.Culture.1"),
+                starts_with("Select.Alumni.1"),
+                starts_with("Select.Fundraising.1"))
+
+selectdata1 <- selectdata1 %>%
+  gather(
+    key = "item",
+    value = "score",
+    c(starts_with("Select.Recruitment"), starts_with("Select.Culture"),
+      starts_with("Select.Alumni"), starts_with("Select.Fundraising"))
+  )
+
+selectdata2 <- data %>%
+  dplyr::select(Name,
+                starts_with("Select.Recruitment.2"),
+                starts_with("Select.Culture.2"),
+                starts_with("Select.Alumni.2"),
+                starts_with("Select.Fundraising.2"))
+
+selectdata2 <- selectdata2 %>%
+  gather(
+    key = "item",
+    value = "response",
+    c(starts_with("Select.Recruitment"), starts_with("Select.Culture"),
+      starts_with("Select.Alumni"), starts_with("Select.Fundraising"))
+  )
+
+## Place scores and additional thoughts side by side
+
+selectdata <- cbind(selectdata1, response = selectdata2$response)
+selectdata$score <- as.numeric(selectdata$score)
+selectdata <- merge(selectdata, matching, by = "item") %>%
+  relocate(item_full, .after = item)
+selectdata <- arrange(selectdata, desc(Name))
+
+rm(selectdata1, selectdata2)
+
+write.csv(selectdata, "Results/Development/Selection Data.csv", row.names = F)
+
+
+#### Calculate sum of scores for each question and filter to those questions which were chosen by at least 2 people
+
+summaryscores <- selectdata %>%
+  group_by(item) %>%
+  summarise(sum = sum(score, na.rm = T),
+            responses = paste(response, sep = ";", collapse = ""))
+
+summaryscores <- merge(summaryscores, matching, by = "item") %>%
+  relocate(item_full, .after = item)
+
+summaryscores <- summaryscores %>% dplyr::filter(sum >= 2)
+
+write.csv(summaryscores, "Results/Development/Selection Results.csv", row.names = F)
+
