@@ -1,0 +1,98 @@
+library(plyr, include.only = c("rbind.fill"))
+
+## Convert ranking data from wide form to long form
+
+rankdata <- data %>%
+  dplyr::select(Name,
+                starts_with("Rank.Recruitment"),
+                starts_with("Rank.Culture"),
+                starts_with("Rank.Alumni"),
+                starts_with("Rank.Fundraising"))
+
+rankdata <- rankdata %>%
+  gather(
+    key = "item",
+    value = "rank",
+    c(starts_with("Rank.Recruitment"), starts_with("Rank.Culture"),
+      starts_with("Rank.Alumni"), starts_with("Rank.Fundraising"))
+  )
+rankdata$rank <- as.numeric(rankdata$rank)
+
+## Replace selection matching with rank matching dataframe for use in this script
+
+rankmatching <- matching
+rankmatching$item <- stringr::str_remove(rankmatching$item, ".1")
+rankmatching$item <- stringr::str_replace(rankmatching$item, "Select.", "Rank.")
+
+## Export long-form ranking data
+
+rankdata <- merge(rankdata, rankmatching, by = "item") %>%
+  relocate(item_full, .after = item)
+
+write.csv(rankdata, "Results/Development/Ranking Data.csv", row.names = F)
+
+#### Calculate pooled ranking for each question within each category
+
+df <- rankdata %>% mutate(
+  category = ifelse(str_detect(item, "^Rank.Recruitment"), "Recruitment",
+                    ifelse(str_detect(item, "^Rank.Alumni"), "Alumni",
+                           ifelse(str_detect(item, "^Rank.Fundraising"), "Fundraising",
+                                  "Culture")))
+)
+
+df$category <- as.factor(df$category)
+
+df <- df %>%
+  group_by(category) %>%
+  group_split
+
+output <- lapply(df, FUN = function (x) {
+  x <- x %>% mutate(weight = (length(unique(x$item)) + 1 - rank))
+  
+  x <- x %>% group_by(item, weight) %>%
+    summarise(n = length(weight)) %>%
+    mutate(wxn = weight*n)
+  
+  x <- x %>% group_by(item) %>%
+    summarise(wavg = mean(wxn, na.rm = T))
+  
+  x <- merge(x, rankmatching, all.x = T, all.y = F)
+  x <- x %>% relocate(item_full, .after = item)
+  x$wavg <- round(x$wavg, digits = 1)
+  x <- x %>% mutate_all(~ifelse(is.nan(.), NA, .))
+  x <- arrange(x, desc(wavg))
+})
+
+output <- rbind.fill(output)
+
+output <- output %>% mutate(
+  category = ifelse(str_detect(item, "^Rank.Recruitment"), "Recruitment",
+                    ifelse(str_detect(item, "^Rank.Alumni"), "Alumni",
+                           ifelse(str_detect(item, "^Rank.Fundraising"), "Fundraising",
+                                  "Culture")))
+)
+
+output$category <- as.factor(output$category)
+output <- output %>% relocate(category, .before = item)
+output <- arrange(output, category, desc(wavg))
+
+output <- output %>%
+  group_by(category) %>%
+  mutate(pooled.rank = dense_rank(desc(wavg)))
+
+write.csv(output, "Results/Development/Ranking Results, Full.csv", row.names = F)
+
+## Now limit to only those items which were indicated for inclusion by at least 2 people (i.e. core measure)
+
+df <- summaryscores
+df$item <- stringr::str_remove(df$item, ".1")
+df$item <- stringr::str_replace(df$item, "Select.", "Rank.")
+df <- df[,c(1,3)]
+
+output <- merge(output, df, by = "item", all.x = F, all.y = T)
+
+output <- arrange(output, category, pooled.rank)
+
+write.csv(output, "Results/Development/Ranking Results, Core.csv", row.names = F)
+
+rm(df, rankmatching, summaryscores, output)
